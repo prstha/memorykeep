@@ -11,6 +11,7 @@
       "icon": "./assets/expo.icon"
     },
     "android": {
+      "package": "com.memorykeep.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -31,6 +32,16 @@
           "backgroundColor": "#208AEF",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
+        }
+      ],
+      "expo-sqlite",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "MemoryKeep reads your photos to group them into events and help you pick the best ones.",
+          "savePhotosPermission": "MemoryKeep saves the collages you create to your photo library.",
+          "isAccessMediaLocationEnabled": true,
+          "granularPermissions": ["photo"]
         }
       ]
     ],

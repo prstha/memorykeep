@@ -1,6 +1,7 @@
-import { AssetField, MediaType, Query } from 'expo-media-library';
+import { Asset, AssetField, MediaType, Query } from 'expo-media-library';
 
-import type { PhotoMeta } from '@/features/types';
+import type { LocationCache, PhotoMeta } from '@/features/types';
+import { validPoint } from '@/lib/geo';
 
 const PAGE_SIZE = 500;
 
@@ -39,4 +40,33 @@ export async function scanDevicePhotos(onProgress?: (count: number) => void): Pr
     if (page.length < PAGE_SIZE) break;
   }
   return photos;
+}
+
+const LOCATION_CONCURRENCY = 16;
+
+/**
+ * Reads GPS for the given photos into `cache` (null when a photo has none or it can't be read).
+ * Each lookup opens the file's metadata, so callers should only ask for the photos they need.
+ */
+export async function fetchLocations(
+  ids: string[],
+  cache: LocationCache,
+  onProgress?: (done: number) => void
+): Promise<void> {
+  let done = 0;
+  for (let i = 0; i < ids.length; i += LOCATION_CONCURRENCY) {
+    const batch = ids.slice(i, i + LOCATION_CONCURRENCY);
+    await Promise.all(
+      batch.map(async (id) => {
+        try {
+          const loc = await new Asset(id).getLocation();
+          cache.set(id, validPoint(loc && { lat: loc.latitude, lon: loc.longitude }));
+        } catch {
+          cache.set(id, null);
+        }
+      })
+    );
+    done += batch.length;
+    onProgress?.(done);
+  }
 }

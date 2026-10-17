@@ -7,22 +7,26 @@ import { AssetThumb } from '@/components/asset-thumb';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
-import { scanLibrary, useLibrary } from '@/features/library-store';
+import { loadSavedLibrary, scanLibrary, type ScanPhase, useLibrary } from '@/features/library-store';
 import { useTheme } from '@/hooks/use-theme';
 
 export default function TimelineScreen() {
   const theme = useTheme();
   const [permission, requestPermission] = usePermissions({ granularPermissions: ['photo'] });
-  const { scanning, scannedCount, events, loose, error } = useLibrary();
+  const { loaded, phase, progress, progressTotal, events, looseCount, lastScanAt, error } = useLibrary();
   const granted = permission?.granted ?? false;
+  const scanning = phase !== 'idle';
 
   useEffect(() => {
-    if (granted && events.length === 0 && !scanning) scanLibrary();
-    // Scan once when access is first granted; rescans are manual.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    loadSavedLibrary();
+  }, []);
+
+  // Rescan on launch once access is granted: the saved library shows immediately and updates when done.
+  useEffect(() => {
+    if (granted) scanLibrary();
   }, [granted]);
 
-  if (!permission) {
+  if (!permission || (granted && !loaded)) {
     return <Centered><ActivityIndicator /></Centered>;
   }
 
@@ -51,9 +55,10 @@ export default function TimelineScreen() {
         ListHeaderComponent={
           <View style={styles.header}>
             <ThemedText themeColor="textSecondary">
-              {scanning
-                ? `Scanning… ${scannedCount} photos`
-                : `${events.length} events · ${loose.length} loose photos`}
+              {`${events.length} events · ${looseCount} loose photos`}
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              {scanning ? scanStatus(phase, progress, progressTotal) : lastScanLabel(lastScanAt)}
             </ThemedText>
             {error && <ThemedText style={{ color: '#d33' }}>{error}</ThemedText>}
             {!scanning && <Button label="Rescan" onPress={scanLibrary} subtle />}
@@ -66,7 +71,7 @@ export default function TimelineScreen() {
               <View style={styles.cardText}>
                 <ThemedText type="smallBold">{item.title}</ThemedText>
                 <ThemedText type="small" themeColor="textSecondary">
-                  {item.photoIds.length} photos
+                  {item.photoIds.length} photos{item.away ? ' · away from home' : ''}
                 </ThemedText>
               </View>
             </Pressable>
@@ -75,6 +80,23 @@ export default function TimelineScreen() {
       />
     </ThemedView>
   );
+}
+
+function scanStatus(phase: ScanPhase, progress: number, total: number): string {
+  switch (phase) {
+    case 'reading':
+      return `Reading your photos… ${progress}`;
+    case 'locating':
+      return `Finding where photos were taken… ${progress}/${total}`;
+    default:
+      return 'Saving…';
+  }
+}
+
+const scanTimeFmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+
+function lastScanLabel(at: number | null): string {
+  return at ? `Last scanned ${scanTimeFmt.format(at)}` : 'Not scanned yet';
 }
 
 function Centered({ children }: { children: React.ReactNode }) {

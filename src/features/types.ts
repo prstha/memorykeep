@@ -1,3 +1,5 @@
+import type { GeoPoint } from '@/lib/geo';
+
 /** Where a photo came from. Google Photos (Picker API) arrives in M6. */
 export type PhotoSource = 'device' | 'google';
 
@@ -12,6 +14,12 @@ export type PhotoMeta = {
   height: number | null;
 };
 
+/**
+ * Cached GPS lookups by photo id: a point, `null` when the photo has no location,
+ * or absent when it has not been looked up yet.
+ */
+export type LocationCache = Map<string, GeoPoint | null>;
+
 export type EventStatus = 'new' | 'reviewed' | 'created' | 'cleaned';
 
 export type PhotoEvent = {
@@ -22,4 +30,6 @@ export type PhotoEvent = {
   photoIds: string[];
   coverId: string;
   status: EventStatus;
+  /** True when the event's photos were taken away from home, e.g. a trip. */
+  away: boolean;
 };

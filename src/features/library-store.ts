@@ -1,29 +1,44 @@
 import { useSyncExternalStore } from 'react';
 
-import { groupIntoEvents } from '@/features/events/group-events';
-import { scanDevicePhotos } from '@/features/gallery/scan-device';
-import type { PhotoEvent, PhotoMeta } from '@/features/types';
+import { loadLibrary, saveLibrary } from '@/features/db/library-repo';
+import {
+  DEFAULT_GROUP_OPTIONS,
+  groupIntoEvents,
+  locationSamples,
+  splitByGap,
+} from '@/features/events/group-events';
+import { reconcileEvents } from '@/features/events/reconcile';
+import { fetchLocations, scanDevicePhotos } from '@/features/gallery/scan-device';
+import type { LocationCache, PhotoEvent } from '@/features/types';
 
-/**
- * In-memory library state. Persisting to SQLite (so scans and review progress survive restarts) comes in M1.
- */
+export type ScanPhase = 'idle' | 'reading' | 'locating' | 'saving';
+
 type LibraryState = {
-  scanning: boolean;
-  scannedCount: number;
-  photos: Map<string, PhotoMeta>;
+  /** False until the saved library has been read from the database. */
+  loaded: boolean;
+  phase: ScanPhase;
+  /** Progress within the current phase: photos read, or locations looked up out of `progressTotal`. */
+  progress: number;
+  progressTotal: number;
   events: PhotoEvent[];
-  loose: PhotoMeta[];
+  looseCount: number;
+  lastScanAt: number | null;
   error: string | null;
 };
 
 let state: LibraryState = {
-  scanning: false,
-  scannedCount: 0,
-  photos: new Map(),
+  loaded: false,
+  phase: 'idle',
+  progress: 0,
+  progressTotal: 0,
   events: [],
-  loose: [],
+  looseCount: 0,
+  lastScanAt: null,
   error: null,
 };
+
+/** GPS lookups survive between scans so each photo is only read once. */
+let locations: LocationCache = new Map();
 
 const listeners = new Set<() => void>();
 
@@ -41,20 +56,54 @@ export function useLibrary(): LibraryState {
   return useSyncExternalStore(subscribe, () => state);
 }
 
-export function getEvent(id: string): PhotoEvent | undefined {
-  return state.events.find((e) => e.id === id);
+let loading: Promise<void> | null = null;
+
+/** Shows the library saved by the last scan, without touching the photo library. */
+export function loadSavedLibrary(): Promise<void> {
+  loading ??= loadLibrary()
+    .then((saved) => {
+      locations = saved.locations;
+      setState({
+        loaded: true,
+        events: saved.events,
+        looseCount: saved.looseCount,
+        lastScanAt: saved.lastScanAt,
+      });
+    })
+    .catch((e) => setState({ loaded: true, error: errorMessage(e) }));
+  return loading;
 }
 
+/**
+ * Re-reads the device library, looks up GPS for photos not seen before, regroups everything and saves it.
+ * Events that survive the regroup keep their id and status.
+ */
 export async function scanLibrary() {
-  if (state.scanning) return;
-  setState({ scanning: true, scannedCount: 0, error: null });
+  if (state.phase !== 'idle') return;
+  await loadSavedLibrary();
+  setState({ phase: 'reading', progress: 0, progressTotal: 0, error: null });
   try {
-    const photos = await scanDevicePhotos((count) => setState({ scannedCount: count }));
-    const { events, loose } = groupIntoEvents(photos);
-    setState({ photos: new Map(photos.map((p) => [p.id, p])), events, loose });
+    const photos = await scanDevicePhotos((count) => setState({ progress: count }));
+
+    const clusters = splitByGap(photos, DEFAULT_GROUP_OPTIONS.gapMs);
+    const missing = clusters.flatMap(locationSamples).filter((p) => !locations.has(p.id)).map((p) => p.id);
+    setState({ phase: 'locating', progress: 0, progressTotal: missing.length });
+    await fetchLocations(missing, locations, (done) => setState({ progress: done }));
+
+    const grouped = groupIntoEvents(photos, locations);
+    const events = reconcileEvents(grouped.events, state.events);
+
+    setState({ phase: 'saving' });
+    const scannedAt = Date.now();
+    await saveLibrary(photos, locations, events, grouped.home, scannedAt);
+    setState({ events, looseCount: grouped.loose.length, lastScanAt: scannedAt });
   } catch (e) {
-    setState({ error: e instanceof Error ? e.message : String(e) });
+    setState({ error: errorMessage(e) });
   } finally {
-    setState({ scanning: false });
+    setState({ phase: 'idle' });
   }
+}
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }

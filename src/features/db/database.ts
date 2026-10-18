@@ -1,6 +1,6 @@
 import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 let dbPromise: Promise<SQLiteDatabase> | null = null;
 
@@ -50,6 +50,21 @@ async function migrate(db: SQLiteDatabase) {
       );
     `);
     version = 1;
+  }
+
+  if (version === 1) {
+    await db.execAsync(`
+      ALTER TABLE photos ADD COLUMN kind TEXT NOT NULL DEFAULT 'camera';
+      CREATE TABLE photo_analysis (
+        photo_id TEXT PRIMARY KEY NOT NULL,
+        dhash TEXT NOT NULL,
+        sharpness REAL NOT NULL,
+        brightness REAL NOT NULL,
+        faces INTEGER,
+        smile REAL
+      );
+    `);
+    version = 2;
   }
 
   await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);

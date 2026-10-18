@@ -1,3 +1,4 @@
+import type { PhotoKind } from '@/features/analysis/photo-kind';
 import type { GeoPoint } from '@/lib/geo';
 
 /** Where a photo came from. Google Photos (Picker API) arrives in M6. */
@@ -12,6 +13,8 @@ export type PhotoMeta = {
   takenAt: number;
   width: number | null;
   height: number | null;
+  /** Screenshots and chat-app images are kept out of events and offered as their own cleanup groups. */
+  kind: PhotoKind;
 };
 
 /**

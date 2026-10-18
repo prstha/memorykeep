@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-import { loadLibrary, saveLibrary } from '@/features/db/library-repo';
+import { type KindCounts, loadLibrary, saveLibrary } from '@/features/db/library-repo';
 import {
   DEFAULT_GROUP_OPTIONS,
   groupIntoEvents,
@@ -22,6 +22,8 @@ type LibraryState = {
   progressTotal: number;
   events: PhotoEvent[];
   looseCount: number;
+  /** Screenshots and chat-app images, which are kept out of events. */
+  kindCounts: KindCounts;
   lastScanAt: number | null;
   error: string | null;
 };
@@ -33,6 +35,7 @@ let state: LibraryState = {
   progressTotal: 0,
   events: [],
   looseCount: 0,
+  kindCounts: { screenshot: 0, messaging: 0 },
   lastScanAt: null,
   error: null,
 };
@@ -67,6 +70,7 @@ export function loadSavedLibrary(): Promise<void> {
         loaded: true,
         events: saved.events,
         looseCount: saved.looseCount,
+        kindCounts: saved.kindCounts,
         lastScanAt: saved.lastScanAt,
       });
     })
@@ -85,18 +89,24 @@ export async function scanLibrary() {
   try {
     const photos = await scanDevicePhotos((count) => setState({ progress: count }));
 
-    const clusters = splitByGap(photos, DEFAULT_GROUP_OPTIONS.gapMs);
+    const camera = photos.filter((p) => p.kind === 'camera');
+    const kindCounts: KindCounts = {
+      screenshot: photos.filter((p) => p.kind === 'screenshot').length,
+      messaging: photos.filter((p) => p.kind === 'messaging').length,
+    };
+
+    const clusters = splitByGap(camera, DEFAULT_GROUP_OPTIONS.gapMs);
     const missing = clusters.flatMap(locationSamples).filter((p) => !locations.has(p.id)).map((p) => p.id);
     setState({ phase: 'locating', progress: 0, progressTotal: missing.length });
     await fetchLocations(missing, locations, (done) => setState({ progress: done }));
 
-    const grouped = groupIntoEvents(photos, locations);
+    const grouped = groupIntoEvents(camera, locations);
     const events = reconcileEvents(grouped.events, state.events);
 
     setState({ phase: 'saving' });
     const scannedAt = Date.now();
     await saveLibrary(photos, locations, events, grouped.home, scannedAt);
-    setState({ events, looseCount: grouped.loose.length, lastScanAt: scannedAt });
+    setState({ events, looseCount: grouped.loose.length, kindCounts, lastScanAt: scannedAt });
   } catch (e) {
     setState({ error: errorMessage(e) });
   } finally {

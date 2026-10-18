@@ -1,5 +1,6 @@
-import { Asset, AssetField, MediaType, Query } from 'expo-media-library';
+import { Asset, AssetField, MediaSubtype, MediaType, Query } from 'expo-media-library';
 
+import { photoKind } from '@/features/analysis/photo-kind';
 import type { LocationCache, PhotoMeta } from '@/features/types';
 import { validPoint } from '@/lib/geo';
 
@@ -34,6 +35,7 @@ export async function scanDevicePhotos(onProgress?: (count: number) => void): Pr
         takenAt: toMillis(time),
         width: a.width,
         height: a.height,
+        kind: photoKind(a.filename, a.mediaSubtypes?.includes(MediaSubtype.SCREENSHOT)),
       });
     }
     onProgress?.(photos.length);

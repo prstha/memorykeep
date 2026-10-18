@@ -21,7 +21,7 @@ function day(day: number, count: number, where: GeoPoint | null, locations: Loca
   return Array.from({ length: count }, (_, k) => {
     const id = `p${nextId++}`;
     locations.set(id, where);
-    return { id, source: 'device', filename: null, takenAt: T0 + day * DAY + k * HOUR, width: 1, height: 1 };
+    return { id, source: 'device', filename: null, takenAt: T0 + day * DAY + k * HOUR, width: 1, height: 1, kind: 'camera' };
   });
 }
 

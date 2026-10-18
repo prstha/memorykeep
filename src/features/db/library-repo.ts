@@ -1,5 +1,7 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
+import type { PhotoAnalysis } from '@/features/analysis/assess';
+import type { PhotoKind } from '@/features/analysis/photo-kind';
 import { getDb } from '@/features/db/database';
 import type { EventStatus, LocationCache, PhotoEvent, PhotoMeta, PhotoSource } from '@/features/types';
 import type { GeoPoint } from '@/lib/geo';
@@ -15,6 +17,7 @@ type PhotoRow = {
   lon: number | null;
   location_checked: number;
   event_id: string | null;
+  kind: PhotoKind;
 };
 
 type EventRow = {
@@ -32,8 +35,11 @@ export type StoredLibrary = {
   locations: LocationCache;
   events: PhotoEvent[];
   looseCount: number;
+  kindCounts: KindCounts;
   lastScanAt: number | null;
 };
+
+export type KindCounts = { screenshot: number; messaging: number };
 
 export async function loadLibrary(): Promise<StoredLibrary> {
   const db = await getDb();
@@ -45,6 +51,7 @@ export async function loadLibrary(): Promise<StoredLibrary> {
   const locations: LocationCache = new Map();
   const photoIdsByEvent = new Map<string, string[]>();
   let looseCount = 0;
+  const kindCounts: KindCounts = { screenshot: 0, messaging: 0 };
   for (const r of photoRows) {
     photos.push({
       id: r.id,
@@ -53,6 +60,7 @@ export async function loadLibrary(): Promise<StoredLibrary> {
       takenAt: r.taken_at,
       width: r.width,
       height: r.height,
+      kind: r.kind,
     });
     if (r.location_checked) {
       locations.set(r.id, r.lat != null && r.lon != null ? { lat: r.lat, lon: r.lon } : null);
@@ -61,8 +69,10 @@ export async function loadLibrary(): Promise<StoredLibrary> {
       const ids = photoIdsByEvent.get(r.event_id) ?? [];
       ids.push(r.id);
       photoIdsByEvent.set(r.event_id, ids);
-    } else {
+    } else if (r.kind === 'camera') {
       looseCount++;
+    } else {
+      kindCounts[r.kind]++;
     }
   }
 
@@ -77,7 +87,7 @@ export async function loadLibrary(): Promise<StoredLibrary> {
     photoIds: photoIdsByEvent.get(r.id) ?? [],
   }));
 
-  return { photos, locations, events, looseCount, lastScanAt: lastScan ? Number(lastScan.value) : null };
+  return { photos, locations, events, looseCount, kindCounts, lastScanAt: lastScan ? Number(lastScan.value) : null };
 }
 
 /**
@@ -98,6 +108,7 @@ export async function saveLibrary(
   await db.withExclusiveTransactionAsync(async (txn) => {
     await txn.execAsync('DELETE FROM photos; DELETE FROM events;');
     await insertPhotos(txn, photos, locations, eventByPhoto);
+    await txn.execAsync('DELETE FROM photo_analysis WHERE photo_id NOT IN (SELECT id FROM photos)');
 
     const insertEvent = await txn.prepareAsync(
       'INSERT INTO events (id, start_at, end_at, title, cover_id, status, away) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -122,8 +133,8 @@ async function insertPhotos(
   eventByPhoto: Map<string, string>
 ) {
   const stmt = await db.prepareAsync(
-    `INSERT INTO photos (id, source, filename, taken_at, width, height, lat, lon, location_checked, event_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO photos (id, source, filename, taken_at, width, height, lat, lon, location_checked, event_id, kind)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   try {
     for (const p of photos) {
@@ -140,6 +151,7 @@ async function insertPhotos(
         loc?.lon ?? null,
         checked ? 1 : 0,
         eventByPhoto.get(p.id) ?? null,
+        p.kind,
       ]);
     }
   } finally {
@@ -151,3 +163,53 @@ async function setMeta(db: SQLiteDatabase, key: string, value: string) {
   await db.runAsync('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)', [key, value]);
 }
 
+
+/** Photos of one event with their capture times, oldest first. */
+export async function loadEventPhotos(eventId: string): Promise<{ id: string; takenAt: number }[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ id: string; taken_at: number }>(
+    'SELECT id, taken_at FROM photos WHERE event_id = ? ORDER BY taken_at',
+    [eventId]
+  );
+  return rows.map((r) => ({ id: r.id, takenAt: r.taken_at }));
+}
+
+type AnalysisRow = {
+  photo_id: string;
+  dhash: string;
+  sharpness: number;
+  brightness: number;
+  faces: number | null;
+  smile: number | null;
+};
+
+/** Saved analyses for the photos of one event. */
+export async function loadAnalyses(eventId: string): Promise<Map<string, PhotoAnalysis>> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<AnalysisRow>(
+    'SELECT a.* FROM photo_analysis a JOIN photos p ON p.id = a.photo_id WHERE p.event_id = ?',
+    [eventId]
+  );
+  return new Map(
+    rows.map((r) => [
+      r.photo_id,
+      {
+        photoId: r.photo_id,
+        dhash: r.dhash,
+        sharpness: r.sharpness,
+        brightness: r.brightness,
+        faces: r.faces,
+        smile: r.smile,
+      },
+    ])
+  );
+}
+
+export async function saveAnalysis(a: PhotoAnalysis) {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT OR REPLACE INTO photo_analysis (photo_id, dhash, sharpness, brightness, faces, smile)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [a.photoId, a.dhash, a.sharpness, a.brightness, a.faces, a.smile]
+  );
+}

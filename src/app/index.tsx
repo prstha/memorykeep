@@ -13,7 +13,8 @@ import { useTheme } from '@/hooks/use-theme';
 export default function TimelineScreen() {
   const theme = useTheme();
   const [permission, requestPermission] = usePermissions({ granularPermissions: ['photo'] });
-  const { loaded, phase, progress, progressTotal, events, looseCount, lastScanAt, error } = useLibrary();
+  const { loaded, phase, progress, progressTotal, events, looseCount, kindCounts, lastScanAt, error } =
+    useLibrary();
   const granted = permission?.granted ?? false;
   const scanning = phase !== 'idle';
 
@@ -57,6 +58,11 @@ export default function TimelineScreen() {
             <ThemedText themeColor="textSecondary">
               {`${events.length} events · ${looseCount} loose photos`}
             </ThemedText>
+            {(kindCounts.screenshot > 0 || kindCounts.messaging > 0) && (
+              <ThemedText type="small" themeColor="textSecondary">
+                {`Kept out of events: ${kindCounts.screenshot} screenshots · ${kindCounts.messaging} chat-app images`}
+              </ThemedText>
+            )}
             <ThemedText type="small" themeColor="textSecondary">
               {scanning ? scanStatus(phase, progress, progressTotal) : lastScanLabel(lastScanAt)}
             </ThemedText>
